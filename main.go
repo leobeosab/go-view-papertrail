@@ -2,6 +2,7 @@ package main
 
 import (
 	"fmt"
+	"math"
 	"os"
 	"strings"
 
@@ -13,13 +14,13 @@ import (
 )
 
 var (
-	term        = termenv.ColorProfile()
-	cursorStyle = termenv.String("==>").Foreground(term.Color("13")).String()
+	term           = termenv.ColorProfile()
+	cursorStyle    = termenv.String("==>").Foreground(term.Color("13")).String()
+	jsonViewHeight = 25 // TODO: make this 40% of the height or adjustable
 )
 
 const (
-	headerHeight   = 3
-	jsonViewHeight = 25 // TODO: make this 40% of the height or adjustable
+	headerHeight = 3
 )
 
 type log struct {
@@ -102,6 +103,12 @@ func (m model) Init() tea.Cmd {
 }
 
 func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
+
+	var (
+		cmd  tea.Cmd
+		cmds []tea.Cmd
+	)
+
 	switch msg := msg.(type) {
 
 	case tea.WindowSizeMsg:
@@ -110,6 +117,8 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		if !m.ready {
 			m.viewport = viewport.Model{Width: msg.Width, Height: msg.Height - verticalMargins}
 			m.viewport.YPosition = headerHeight
+			m.viewport.HighPerformanceRendering = true
+			jsonViewHeight = int(math.Floor(float64(m.viewport.Height) * 0.4))
 			m.ready = true
 		} else {
 			m.viewport.Width = msg.Width
@@ -132,6 +141,18 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				m.cursor++
 			}
 
+		case "-":
+			if jsonViewHeight > 15 {
+				jsonViewHeight -= 5
+				m.viewport.Height += 5
+			}
+
+		case "+":
+			if jsonViewHeight <= 50 && m.viewport.Height >= 15 {
+				jsonViewHeight += 5
+				m.viewport.Height -= 5
+			}
+
 		case "enter", " ":
 			_, ok := m.selected[m.cursor]
 			if ok {
@@ -143,13 +164,14 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 
 	default:
 		if !m.ready {
-			var cmd tea.Cmd
 			m.spinner, cmd = spinner.Update(msg, m.spinner)
-			return m, cmd
+			cmds = append(cmds, cmd)
 		}
 	}
 
-	return m, nil
+	m.viewport, cmd = viewport.Update(msg, m.viewport)
+	cmds = append(cmds, cmd)
+	return m, tea.Batch(cmds...)
 }
 
 func (m model) View() string {
