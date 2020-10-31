@@ -11,16 +11,20 @@ import (
 	tea "github.com/charmbracelet/bubbletea"
 	"github.com/mattn/go-runewidth"
 	"github.com/muesli/termenv"
+	"github.com/tidwall/pretty"
 )
 
 var (
 	term           = termenv.ColorProfile()
 	cursorStyle    = termenv.String("==>").Foreground(term.Color("13")).String()
-	jsonViewHeight = 25 // TODO: make this 40% of the height or adjustable
+	logViewHeight  = 0
+	jsonViewHeight = 0
+	screenHeight   = 0
+	screenWidth    = 0
 )
 
 const (
-	headerHeight = 3
+	headerHeight = 6
 )
 
 type log struct {
@@ -87,7 +91,7 @@ func initialModel() model {
 				env:      "production",
 				severity: "error",
 				label:    "We had an error in production, I blame Ryan",
-				json:     "The JSON",
+				json:     "{\"name\":{\"first\":\"Tom\",\"last\":\"Anderson\"},\"age\":37,\"children\":[\"Sara\",\"Alex\",\"Jack\"],\"fav.movie\":\"Deer Hunter\",\"friends\":[{\"first\":\"Janet\",\"last\":\"Murphy\",\"age\":44}]}",
 			},
 		},
 		ready:    false,
@@ -105,20 +109,23 @@ func (m model) Init() tea.Cmd {
 func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 
 	var (
-		cmd  tea.Cmd
-		cmds []tea.Cmd
+		cmd           tea.Cmd
+		cmds          []tea.Cmd
+		updateContent bool
 	)
 
 	switch msg := msg.(type) {
 
 	case tea.WindowSizeMsg:
-		verticalMargins := headerHeight + jsonViewHeight
 
 		if !m.ready {
-			m.viewport = viewport.Model{Width: msg.Width, Height: msg.Height - verticalMargins}
-			m.viewport.YPosition = headerHeight
+			screenHeight = msg.Height
+			screenWidth = msg.Width
+			logViewHeight = int(math.Floor(float64(screenHeight-headerHeight) * 0.6))
+			m.viewport = viewport.Model{Width: screenWidth, Height: screenHeight - (headerHeight + logViewHeight)}
+			m.viewport.YPosition = (headerHeight + logViewHeight + 2)
 			m.viewport.HighPerformanceRendering = true
-			jsonViewHeight = int(math.Floor(float64(m.viewport.Height) * 0.4))
+			updateContent = true
 			m.ready = true
 		} else {
 			m.viewport.Width = msg.Width
@@ -134,23 +141,29 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		case "up", "k":
 			if m.cursor > 0 {
 				m.cursor--
+				updateContent = true
 			}
 
 		case "down", "j":
-			if m.cursor < len(m.options) {
+			if m.cursor < len(m.options)-1 {
 				m.cursor++
+				updateContent = true
 			}
 
 		case "-":
-			if jsonViewHeight > 15 {
-				jsonViewHeight -= 5
-				m.viewport.Height += 5
+			if m.viewport.Height > 15 {
+				logViewHeight += 5
+				m.viewport.Height -= 5
+				m.viewport.YPosition += 5
+				updateContent = true
 			}
 
 		case "+":
-			if jsonViewHeight <= 50 && m.viewport.Height >= 15 {
-				jsonViewHeight += 5
-				m.viewport.Height -= 5
+			if m.viewport.Height <= 50 && logViewHeight >= 15 {
+				m.viewport.Height += 5
+				m.viewport.YPosition -= 5
+				logViewHeight -= 5
+				updateContent = true
 			}
 
 		case "enter", " ":
@@ -169,6 +182,12 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		}
 	}
 
+	if updateContent {
+		formattedJSON := pretty.Pretty([]byte(m.options[m.cursor].json))
+		m.viewport.SetContent(string(pretty.Color(formattedJSON, nil)))
+		cmds = append(cmds, viewport.Sync(m.viewport))
+	}
+
 	m.viewport, cmd = viewport.Update(msg, m.viewport)
 	cmds = append(cmds, cmd)
 	return m, tea.Batch(cmds...)
@@ -184,7 +203,7 @@ func (m model) View() string {
 		return fmt.Sprintf("\n\n %s Initializing... press q to quit \n\n", s)
 	}
 
-	gapSize := m.viewport.Width - runewidth.StringWidth("╭─────────────╮")
+	gapSize := screenWidth - runewidth.StringWidth("╭─────────────╮")
 
 	headerTop := "╭─────────────╮" + strings.Repeat(" ", gapSize)
 	headerMid := "│ Paper Trail ├" + strings.Repeat("─", gapSize)
@@ -221,9 +240,11 @@ func (m model) View() string {
 	s += "\nPress q to quit. \n"
 	lineCount++
 
-	s += strings.Repeat("\n", m.viewport.Height-lineCount)
+	s += strings.Repeat("\n", logViewHeight-lineCount)
 
 	s += viewJSON(m, selected)
+
+	s += fmt.Sprintf("\n%s\n", viewport.View(m.viewport))
 
 	return s
 }
@@ -239,11 +260,11 @@ func viewJSON(m model, l log) string {
 
 	jHeader := fmt.Sprintf("%s\n%s\n%s", headerTop, headerMid, headerBot)
 
-	jContent := l.json
+	formattedJSON := pretty.Pretty([]byte(l.json))
 
-	jEnd := strings.Repeat("\n", jsonViewHeight-6)
+	m.viewport.SetContent(string(pretty.Color(formattedJSON, nil)) + "\n")
 
-	return fmt.Sprintf("%s\n%s\n%s", jHeader, jContent, jEnd)
+	return fmt.Sprintf("%s", jHeader)
 }
 
 func main() {
