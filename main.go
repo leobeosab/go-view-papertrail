@@ -12,11 +12,14 @@ import (
 	"github.com/muesli/termenv"
 )
 
-var term = termenv.ColorProfile()
+var (
+	term        = termenv.ColorProfile()
+	cursorStyle = termenv.String("==>").Foreground(term.Color("13")).String()
+)
 
 const (
 	headerHeight = 3
-	footerHeight = 3
+	footerHeight = 15
 )
 
 type log struct {
@@ -24,6 +27,36 @@ type log struct {
 	severity string
 	label    string
 	json     string
+}
+
+func (l log) display() string {
+	s := ""
+
+	s += "[" + termenv.String(l.env).Foreground(term.Color("14")).String() + "]"
+	s += " - "
+	s += displaySeverity(l.severity)
+	s += " "
+	s += l.label
+
+	return s
+}
+
+func displaySeverity(s string) string {
+	var background string
+	switch s {
+	case "error":
+		background = "1"
+	case "warning":
+		background = "11"
+	case "info":
+		background = "10"
+	default:
+		background = "15"
+	}
+
+	s = " " + s + " "
+
+	return termenv.String(s).Foreground(term.Color("0")).Background(term.Color(background)).String()
 }
 
 type model struct {
@@ -39,8 +72,8 @@ func initialModel() model {
 	m := model{
 		options: []log{
 			log{
-				env:      "PROD",
-				severity: "ERROR",
+				env:      "production",
+				severity: "error",
 				label:    "YO SHITS FUCKED",
 				json:     "",
 			},
@@ -132,7 +165,7 @@ func (m model) View() string {
 		// Is cursor on this choice
 		cursor := " "
 		if m.cursor == i {
-			cursor = ">"
+			cursor = cursorStyle
 		}
 
 		// Is this choice selected
@@ -142,7 +175,7 @@ func (m model) View() string {
 		}
 
 		// Render the row
-		s += fmt.Sprintf("%s [%s] %s\n", cursor, checked, choice.label)
+		s += fmt.Sprintf("%s [%s] %s\n", cursor, checked, choice.display())
 	}
 
 	// Footer
