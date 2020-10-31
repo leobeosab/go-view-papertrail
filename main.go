@@ -242,27 +242,23 @@ func (m model) View() string {
 
 	s += strings.Repeat("\n", logViewHeight-lineCount)
 
-	s += viewJSON(m, selected)
+	s += jsonHeader(selected)
 
 	s += fmt.Sprintf("\n%s\n", viewport.View(m.viewport))
 
 	return s
 }
 
-func viewJSON(m model, l log) string {
+func jsonHeader(l log) string {
 
 	logGapSize := runewidth.StringWidth(l.display(false)) + 1
-	stringGapSize := m.viewport.Width - (runewidth.StringWidth("│ JSON ├─") + logGapSize + 4)
+	stringGapSize := screenWidth - (runewidth.StringWidth("│ JSON ├─") + logGapSize + 4)
 
 	headerTop := "╭──────╮  ╭─" + strings.Repeat("─", logGapSize) + "╮" + strings.Repeat(" ", stringGapSize)
 	headerMid := "│ JSON ├──┤ " + l.display(true) + " ├" + strings.Repeat("─", stringGapSize)
 	headerBot := "╰──────╯  ╰─" + strings.Repeat("─", logGapSize) + "╯" + strings.Repeat(" ", stringGapSize)
 
 	jHeader := fmt.Sprintf("%s\n%s\n%s", headerTop, headerMid, headerBot)
-
-	formattedJSON := pretty.Pretty([]byte(l.json))
-
-	m.viewport.SetContent(string(pretty.Color(formattedJSON, nil)) + "\n")
 
 	return fmt.Sprintf("%s", jHeader)
 }
