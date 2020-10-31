@@ -1,4 +1,4 @@
-module github.com/leobeosab/GoViewPapertrail
+module github.com/leobeosab/go-view-papertrail
 
 go 1.15
 
