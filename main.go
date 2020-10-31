@@ -18,8 +18,8 @@ var (
 )
 
 const (
-	headerHeight = 3
-	footerHeight = 15
+	headerHeight   = 3
+	jsonViewHeight = 25 // TODO: make this 40% of the height or adjustable
 )
 
 type log struct {
@@ -29,12 +29,23 @@ type log struct {
 	json     string
 }
 
-func (l log) display() string {
+func (l log) display(color bool) string {
 	s := ""
 
-	s += "[" + termenv.String(l.env).Foreground(term.Color("14")).String() + "]"
+	var env string
+	var severity string
+
+	if color {
+		env = termenv.String(l.env).Foreground(term.Color("14")).String()
+		severity = displaySeverity(l.severity)
+	} else {
+		severity = " " + l.severity + " "
+		env = l.env
+	}
+
+	s += "[" + env + "]"
 	s += " - "
-	s += displaySeverity(l.severity)
+	s += severity
 	s += " "
 	s += l.label
 
@@ -74,8 +85,8 @@ func initialModel() model {
 			log{
 				env:      "production",
 				severity: "error",
-				label:    "YO SHITS FUCKED",
-				json:     "",
+				label:    "We had an error in production, I blame Ryan",
+				json:     "The JSON",
 			},
 		},
 		ready:    false,
@@ -94,7 +105,7 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	switch msg := msg.(type) {
 
 	case tea.WindowSizeMsg:
-		verticalMargins := headerHeight + footerHeight
+		verticalMargins := headerHeight + jsonViewHeight
 
 		if !m.ready {
 			m.viewport = viewport.Model{Width: msg.Width, Height: msg.Height - verticalMargins}
@@ -161,10 +172,15 @@ func (m model) View() string {
 
 	s := header
 
+	var selected log
+
+	lineCount := 0
+
 	for i, choice := range m.options {
 		// Is cursor on this choice
 		cursor := " "
 		if m.cursor == i {
+			selected = m.options[i]
 			cursor = cursorStyle
 		}
 
@@ -175,13 +191,37 @@ func (m model) View() string {
 		}
 
 		// Render the row
-		s += fmt.Sprintf("%s [%s] %s\n", cursor, checked, choice.display())
+		s += fmt.Sprintf("%s [%s] %s\n", cursor, checked, choice.display(true))
+		lineCount++
 	}
 
 	// Footer
 	s += "\nPress q to quit. \n"
+	lineCount++
+
+	s += strings.Repeat("\n", m.viewport.Height-lineCount)
+
+	s += viewJSON(m, selected)
 
 	return s
+}
+
+func viewJSON(m model, l log) string {
+
+	logGapSize := runewidth.StringWidth(l.display(false)) + 1
+	stringGapSize := m.viewport.Width - (runewidth.StringWidth("│ JSON ├─") + logGapSize + 4)
+
+	headerTop := "╭──────╮  ╭─" + strings.Repeat("─", logGapSize) + "╮" + strings.Repeat(" ", stringGapSize)
+	headerMid := "│ JSON ├──┤ " + l.display(true) + " ├" + strings.Repeat("─", stringGapSize)
+	headerBot := "╰──────╯  ╰─" + strings.Repeat("─", logGapSize) + "╯" + strings.Repeat(" ", stringGapSize)
+
+	jHeader := fmt.Sprintf("%s\n%s\n%s", headerTop, headerMid, headerBot)
+
+	jContent := l.json
+
+	jEnd := strings.Repeat("\n", jsonViewHeight-6)
+
+	return fmt.Sprintf("%s\n%s\n%s", jHeader, jContent, jEnd)
 }
 
 func main() {
