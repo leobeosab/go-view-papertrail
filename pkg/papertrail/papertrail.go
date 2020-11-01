@@ -7,6 +7,10 @@ import (
 	"net/http"
 	"os"
 	"regexp"
+	"strings"
+	"time"
+
+	"github.com/muesli/termenv"
 )
 
 var (
@@ -45,6 +49,52 @@ type Log struct {
 	Message  string
 	JSON     string
 	Date     string
+}
+
+// Display return string to be displayed in console
+func (l Log) Display(color bool, term termenv.Profile) string {
+	s := ""
+
+	var env string
+	var severity string
+
+	if color {
+		env = termenv.String(l.Env).Foreground(term.Color("14")).String()
+		severity = displaySeverity(l.Severity, term)
+	} else {
+		severity = " " + l.Severity + " "
+		env = l.Env
+	}
+
+	dt, _ := time.Parse(time.RFC3339, l.Date)
+	date := dt.Format("2006-1-2 15:04:05 MST")
+
+	s += date + " "
+	s += "[" + env + "]"
+	s += " - "
+	s += severity
+	s += " "
+	s += l.Label
+
+	return s
+}
+
+func displaySeverity(s string, term termenv.Profile) string {
+	var background string
+	switch strings.ToLower(s) {
+	case "error":
+		background = "1"
+	case "warning":
+		background = "11"
+	case "info":
+		background = "10"
+	default:
+		background = "15"
+	}
+
+	s = " " + s + " "
+
+	return termenv.String(s).Foreground(term.Color("0")).Background(term.Color(background)).String()
 }
 
 // Init papertrail
@@ -131,8 +181,4 @@ func sendPapertrailRequest(query string) (string, bool) {
 	}
 
 	return string(body), true
-}
-
-func formatPapertrailLogs() {
-
 }

@@ -1,6 +1,7 @@
 package main
 
 import (
+	"encoding/json"
 	"fmt"
 	"math"
 	"os"
@@ -9,7 +10,9 @@ import (
 	"github.com/charmbracelet/bubbles/spinner"
 	"github.com/charmbracelet/bubbles/viewport"
 	tea "github.com/charmbracelet/bubbletea"
+	"github.com/leobeosab/go-view-papertrail/pkg/papertrail"
 	"github.com/mattn/go-runewidth"
+	"github.com/muesli/reflow/wordwrap"
 	"github.com/muesli/termenv"
 	"github.com/tidwall/pretty"
 )
@@ -24,79 +27,27 @@ var (
 )
 
 const (
-	headerHeight = 6
+	headerHeight = 8
 )
 
-type log struct {
-	env      string
-	severity string
-	label    string
-	json     string
-}
-
-func (l log) display(color bool) string {
-	s := ""
-
-	var env string
-	var severity string
-
-	if color {
-		env = termenv.String(l.env).Foreground(term.Color("14")).String()
-		severity = displaySeverity(l.severity)
-	} else {
-		severity = " " + l.severity + " "
-		env = l.env
-	}
-
-	s += "[" + env + "]"
-	s += " - "
-	s += severity
-	s += " "
-	s += l.label
-
-	return s
-}
-
-func displaySeverity(s string) string {
-	var background string
-	switch s {
-	case "error":
-		background = "1"
-	case "warning":
-		background = "11"
-	case "info":
-		background = "10"
-	default:
-		background = "15"
-	}
-
-	s = " " + s + " "
-
-	return termenv.String(s).Foreground(term.Color("0")).Background(term.Color(background)).String()
-}
-
 type model struct {
-	options  []log
-	cursor   int
-	selected map[int]struct{}
-	ready    bool
-	spinner  spinner.Model
-	viewport viewport.Model
+	options    []papertrail.Log
+	cursor     int
+	selected   map[int]struct{}
+	ready      bool
+	shouldSpin bool
+	spinner    spinner.Model
+	viewport   viewport.Model
+	logOffset  int
 }
 
 func initialModel() model {
 	m := model{
-		options: []log{
-			log{
-				env:      "production",
-				severity: "error",
-				label:    "We had an error in production, I blame Ryan",
-				json:     "{\"name\":{\"first\":\"Tom\",\"last\":\"Anderson\"},\"age\":37,\"children\":[\"Sara\",\"Alex\",\"Jack\"],\"fav.movie\":\"Deer Hunter\",\"friends\":[{\"first\":\"Janet\",\"last\":\"Murphy\",\"age\":44}]}",
-			},
-		},
-		ready:    false,
-		selected: make(map[int]struct{}),
-		spinner:  spinner.NewModel(),
+		options:   papertrail.GetLogs(""),
+		logOffset: 0,
+		ready:     false,
+		selected:  make(map[int]struct{}),
+		spinner:   spinner.NewModel(),
 	}
 	m.spinner.Frames = spinner.Dot
 	return m
@@ -123,10 +74,11 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			screenWidth = msg.Width
 			logViewHeight = int(math.Floor(float64(screenHeight-headerHeight) * 0.6))
 			m.viewport = viewport.Model{Width: screenWidth, Height: screenHeight - (headerHeight + logViewHeight)}
-			m.viewport.YPosition = (headerHeight + logViewHeight + 2)
-			m.viewport.HighPerformanceRendering = true
+			m.viewport.YPosition = (headerHeight + logViewHeight)
+			m.viewport.HighPerformanceRendering = false
 			updateContent = true
 			m.ready = true
+			m.viewport, _ = viewport.Update(msg, m.viewport)
 		} else {
 			m.viewport.Width = msg.Width
 			m.viewport.Height = msg.Height
@@ -138,17 +90,32 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		case "ctrl+c", "q":
 			return m, tea.Quit
 
-		case "up", "k":
+		case "up":
 			if m.cursor > 0 {
+				if m.cursor-m.logOffset == 0 {
+					m.logOffset--
+				}
+
 				m.cursor--
 				updateContent = true
 			}
 
-		case "down", "j":
+		case "down":
 			if m.cursor < len(m.options)-1 {
 				m.cursor++
+
+				if m.cursor-m.logOffset >= logViewHeight-1 {
+					m.logOffset++
+				}
+
 				updateContent = true
 			}
+
+		case "j":
+			m.viewport.LineDown(1)
+
+		case "k":
+			m.viewport.LineUp(1)
 
 		case "-":
 			if m.viewport.Height > 15 {
@@ -166,6 +133,9 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				updateContent = true
 			}
 
+		case "r":
+			updateContent = true
+
 		case "enter", " ":
 			_, ok := m.selected[m.cursor]
 			if ok {
@@ -176,20 +146,24 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		}
 
 	default:
-		if !m.ready {
+		if !m.ready || m.shouldSpin {
 			m.spinner, cmd = spinner.Update(msg, m.spinner)
 			cmds = append(cmds, cmd)
 		}
 	}
 
-	if updateContent {
-		formattedJSON := pretty.Pretty([]byte(m.options[m.cursor].json))
-		m.viewport.SetContent(string(pretty.Color(formattedJSON, nil)))
-		cmds = append(cmds, viewport.Sync(m.viewport))
+	if updateContent && len(m.options) > 0 && m.options[m.cursor].JSON != "" {
+		m.viewport.GotoTop()
+
+		if json.Valid([]byte(m.options[m.cursor].JSON)) {
+			formattedJSON := pretty.Pretty([]byte(m.options[m.cursor].JSON))
+			coloredJSON := string(pretty.Color(formattedJSON, nil))
+			m.viewport.SetContent(wordwrap.String(coloredJSON, screenWidth))
+		} else {
+			m.viewport.SetContent("Error Loading JSON: ")
+		}
 	}
 
-	m.viewport, cmd = viewport.Update(msg, m.viewport)
-	cmds = append(cmds, cmd)
 	return m, tea.Batch(cmds...)
 }
 
@@ -213,32 +187,30 @@ func (m model) View() string {
 
 	s := header
 
-	var selected log
+	var selected papertrail.Log
 
 	lineCount := 0
 
-	for i, choice := range m.options {
+	for i, choice := range m.options[m.logOffset : logViewHeight+m.logOffset-1] {
+
+		logIndex := i + m.logOffset
+
 		// Is cursor on this choice
 		cursor := " "
-		if m.cursor == i {
-			selected = m.options[i]
+		if m.cursor == logIndex {
+			selected = m.options[logIndex]
 			cursor = cursorStyle
 		}
 
-		// Is this choice selected
-		checked := " "
-		if _, ok := m.selected[i]; ok {
-			checked = "x"
+		// Render the row
+		s += fmt.Sprintf("%s %s\n", cursor, choice.Display(true, term))
+
+		if i == logViewHeight-1 {
+			break
 		}
 
-		// Render the row
-		s += fmt.Sprintf("%s [%s] %s\n", cursor, checked, choice.display(true))
 		lineCount++
 	}
-
-	// Footer
-	s += "\nPress q to quit. \n"
-	lineCount++
 
 	s += strings.Repeat("\n", logViewHeight-lineCount)
 
@@ -249,13 +221,13 @@ func (m model) View() string {
 	return s
 }
 
-func jsonHeader(l log) string {
+func jsonHeader(l papertrail.Log) string {
 
-	logGapSize := runewidth.StringWidth(l.display(false)) + 1
+	logGapSize := runewidth.StringWidth(l.Display(false, term)) + 1
 	stringGapSize := screenWidth - (runewidth.StringWidth("│ JSON ├─") + logGapSize + 4)
 
 	headerTop := "╭──────╮  ╭─" + strings.Repeat("─", logGapSize) + "╮" + strings.Repeat(" ", stringGapSize)
-	headerMid := "│ JSON ├──┤ " + l.display(true) + " ├" + strings.Repeat("─", stringGapSize)
+	headerMid := "│ JSON ├──┤ " + l.Display(true, term) + " ├" + strings.Repeat("─", stringGapSize)
 	headerBot := "╰──────╯  ╰─" + strings.Repeat("─", logGapSize) + "╯" + strings.Repeat(" ", stringGapSize)
 
 	jHeader := fmt.Sprintf("%s\n%s\n%s", headerTop, headerMid, headerBot)
@@ -264,6 +236,7 @@ func jsonHeader(l log) string {
 }
 
 func main() {
+	papertrail.Init()
 	p := tea.NewProgram(initialModel())
 
 	p.EnterAltScreen()
