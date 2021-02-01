@@ -67,14 +67,15 @@ func (l Log) Display(color bool, term termenv.Profile) string {
 	}
 
 	dt, _ := time.Parse(time.RFC3339, l.Date)
-	date := dt.Format("2006-1-2 15:04:05 MST")
+	date := dt.Format("2006-1-2 15:04")
 
 	s += date + " "
 	s += "[" + env + "]"
 	s += " - "
 	s += severity
 	s += " "
-	s += l.Label
+	s += "(" + l.Label + ") ~"
+	s += l.Message
 
 	return s
 }
