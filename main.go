@@ -8,6 +8,7 @@ import (
 	"strings"
 
 	"github.com/charmbracelet/bubbles/spinner"
+	"github.com/charmbracelet/bubbles/textinput"
 	"github.com/charmbracelet/bubbles/viewport"
 	tea "github.com/charmbracelet/bubbletea"
 	"github.com/leobeosab/go-view-papertrail/pkg/papertrail"
@@ -38,7 +39,10 @@ type model struct {
 	shouldSpin bool
 	spinner    spinner.Model
 	viewport   viewport.Model
+	search     textinput.Model
+	searching  bool
 	logOffset  int
+	err        error
 }
 
 func initialModel() model {
@@ -48,13 +52,15 @@ func initialModel() model {
 		ready:     false,
 		selected:  make(map[int]struct{}),
 		spinner:   spinner.NewModel(),
+		search:    textinput.NewModel(),
+		searching: false,
 	}
-	m.spinner.Frames = spinner.Dot
+	m.spinner.Spinner = spinner.Dot
 	return m
 }
 
 func (m model) Init() tea.Cmd {
-	return spinner.Tick(m.spinner)
+	return spinner.Tick
 }
 
 func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
@@ -78,7 +84,7 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			m.viewport.HighPerformanceRendering = false
 			updateContent = true
 			m.ready = true
-			m.viewport, _ = viewport.Update(msg, m.viewport)
+			m.viewport, _ = m.viewport.Update(msg)
 		} else {
 			m.viewport.Width = msg.Width
 			m.viewport.Height = msg.Height
@@ -87,7 +93,7 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	case tea.KeyMsg:
 		switch msg.String() {
 
-		case "ctrl+c", "q":
+		case "ctrl+c":
 			return m, tea.Quit
 
 		case "up":
@@ -112,10 +118,22 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			}
 
 		case "j":
-			m.viewport.LineDown(1)
+			// Yeah these are gross
+			if m.searching {
+				m.search, cmd = m.search.Update(msg)
+				cmds = append(cmds, cmd)
+			} else {
+				m.viewport.LineDown(1)
+			}
 
 		case "k":
-			m.viewport.LineUp(1)
+			// Yeah these are gross
+			if m.searching {
+				m.search, cmd = m.search.Update(msg)
+				cmds = append(cmds, cmd)
+			} else {
+				m.viewport.LineUp(1)
+			}
 
 		case "-":
 			if m.viewport.Height > 15 {
@@ -133,21 +151,36 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				updateContent = true
 			}
 
-		case "r":
-			updateContent = true
+		case "/":
+			m.searching = true
+			m.search.Focus()
 
 		case "enter", " ":
-			_, ok := m.selected[m.cursor]
-			if ok {
-				delete(m.selected, m.cursor)
+			if m.searching {
+				m.options = papertrail.GetLogs(m.search.Value())
+				m.search.SetValue("")
+				m.searching = false
 			} else {
-				m.selected[m.cursor] = struct{}{}
+				_, ok := m.selected[m.cursor]
+				if ok {
+					delete(m.selected, m.cursor)
+				} else {
+					m.selected[m.cursor] = struct{}{}
+				}
 			}
+
+		default:
+			if m.searching {
+				m.search, cmd = m.search.Update(msg)
+				cmds = append(cmds, cmd)
+			}
+
 		}
 
 	default:
+
 		if !m.ready || m.shouldSpin {
-			m.spinner, cmd = spinner.Update(msg, m.spinner)
+			m.spinner, cmd = m.spinner.Update(msg)
 			cmds = append(cmds, cmd)
 		}
 	}
@@ -170,7 +203,7 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 func (m model) View() string {
 
 	if !m.ready {
-		s := termenv.String(spinner.View(m.spinner)).
+		s := termenv.String(m.spinner.View()).
 			Foreground(term.Color("205")).
 			String()
 
@@ -216,7 +249,11 @@ func (m model) View() string {
 
 	s += jsonHeader(selected)
 
-	s += fmt.Sprintf("\n%s\n", viewport.View(m.viewport))
+	s += fmt.Sprintf("\n%s\n", m.viewport.View())
+
+	if m.searching {
+		s += fmt.Sprintf("\n/%s", m.search.Value())
+	}
 
 	return s
 }
