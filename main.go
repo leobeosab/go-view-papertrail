@@ -93,7 +93,7 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	case tea.KeyMsg:
 		switch msg.String() {
 
-		case "ctrl+c", "q":
+		case "ctrl+c":
 			return m, tea.Quit
 
 		case "up":
@@ -127,7 +127,13 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			}
 
 		case "k":
-			m.viewport.LineUp(1)
+			// Yeah these are gross
+			if m.searching {
+				m.search, cmd = m.search.Update(msg)
+				cmds = append(cmds, cmd)
+			} else {
+				m.viewport.LineUp(1)
+			}
 
 		case "-":
 			if m.viewport.Height > 15 {
@@ -145,23 +151,34 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				updateContent = true
 			}
 
-		case "r":
-			updateContent = true
-
 		case "/":
 			m.searching = true
 			m.search.Focus()
 
 		case "enter", " ":
-			_, ok := m.selected[m.cursor]
-			if ok {
-				delete(m.selected, m.cursor)
+			if m.searching {
+				m.options = papertrail.GetLogs(m.search.Value())
+				m.search.SetValue("")
+				m.searching = false
 			} else {
-				m.selected[m.cursor] = struct{}{}
+				_, ok := m.selected[m.cursor]
+				if ok {
+					delete(m.selected, m.cursor)
+				} else {
+					m.selected[m.cursor] = struct{}{}
+				}
 			}
+
+		default:
+			if m.searching {
+				m.search, cmd = m.search.Update(msg)
+				cmds = append(cmds, cmd)
+			}
+
 		}
 
 	default:
+
 		if !m.ready || m.shouldSpin {
 			m.spinner, cmd = m.spinner.Update(msg)
 			cmds = append(cmds, cmd)
